@@ -10,6 +10,7 @@ import { Input } from '../components/ui/input'
 import { Textarea } from '../components/ui/textarea'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '../components/ui/tooltip'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../components/ui/tabs'
+import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '../components/ui/accordion'
 import { 
   Calendar, 
   DollarSign, 
@@ -1255,7 +1256,12 @@ function RFQDashboard() {
       totalVat: 0,
       avgFreightPercentage: 0,
       avgVatPercentage: 0,
-      supplierBreakdown: {}
+      avgBasePercentage: 0,
+      supplierBreakdown: {},
+      bestFreightSupplier: null,
+      bestVatSupplier: null,
+      worstFreightSupplier: null,
+      worstVatSupplier: null
     }
 
     supplierNames.forEach(supplier => {
@@ -1280,6 +1286,7 @@ function RFQDashboard() {
         freight: supplierFreight,
         vat: supplierVat,
         total: supplierTotal,
+        basePercentage: supplierTotal > 0 ? ((supplierBase / supplierTotal) * 100).toFixed(1) : 0,
         freightPercentage: supplierTotal > 0 ? ((supplierFreight / supplierTotal) * 100).toFixed(1) : 0,
         vatPercentage: supplierTotal > 0 ? ((supplierVat / supplierTotal) * 100).toFixed(1) : 0
       }
@@ -1289,14 +1296,24 @@ function RFQDashboard() {
       analytics.totalVat += supplierVat
     })
 
-    // Calculate averages
-    const validSuppliers = Object.values(analytics.supplierBreakdown).filter(s => s.total > 0)
-    analytics.avgFreightPercentage = validSuppliers.length > 0 
-      ? (validSuppliers.reduce((sum, s) => sum + parseFloat(s.freightPercentage), 0) / validSuppliers.length).toFixed(1)
-      : 0
-    analytics.avgVatPercentage = validSuppliers.length > 0 
-      ? (validSuppliers.reduce((sum, s) => sum + parseFloat(s.vatPercentage), 0) / validSuppliers.length).toFixed(1)
-      : 0
+    // Calculate averages and find best/worst suppliers
+    const validSuppliers = Object.entries(analytics.supplierBreakdown).filter(([_, s]) => s.total > 0)
+    
+    if (validSuppliers.length > 0) {
+      analytics.avgBasePercentage = (validSuppliers.reduce((sum, [_, s]) => sum + parseFloat(s.basePercentage), 0) / validSuppliers.length).toFixed(1)
+      analytics.avgFreightPercentage = (validSuppliers.reduce((sum, [_, s]) => sum + parseFloat(s.freightPercentage), 0) / validSuppliers.length).toFixed(1)
+      analytics.avgVatPercentage = (validSuppliers.reduce((sum, [_, s]) => sum + parseFloat(s.vatPercentage), 0) / validSuppliers.length).toFixed(1)
+      
+      // Find best and worst freight suppliers (lowest freight percentage is best)
+      const sortedByFreight = validSuppliers.sort((a, b) => parseFloat(a[1].freightPercentage) - parseFloat(b[1].freightPercentage))
+      analytics.bestFreightSupplier = sortedByFreight[0][0]
+      analytics.worstFreightSupplier = sortedByFreight[sortedByFreight.length - 1][0]
+      
+      // Find best and worst VAT suppliers (lowest VAT percentage is best)
+      const sortedByVat = validSuppliers.sort((a, b) => parseFloat(a[1].vatPercentage) - parseFloat(b[1].vatPercentage))
+      analytics.bestVatSupplier = sortedByVat[0][0]
+      analytics.worstVatSupplier = sortedByVat[sortedByVat.length - 1][0]
+    }
 
     return analytics
   }
@@ -2058,131 +2075,141 @@ function RFQDashboard() {
                 </CardHeader>
                 <CardContent>
                   <div className="space-y-8">
-                    {Object.entries(groupedItems).map(([category, categoryItems]) => {
-                      const categoryTotals = calculateCategoryTotals(categoryItems)
-                      
-                      return (
-                        <div key={category} className="space-y-4">
-                          {/* Category Header */}
-                          <div className="flex items-center justify-between p-4 bg-gray-50 rounded-lg">
-                            <h3 className="text-lg font-semibold text-gray-900">{category}</h3>
-                            <div className="flex items-center space-x-4">
-                              <span className="text-sm text-gray-500">
-                                {categoryItems.length} item{categoryItems.length !== 1 ? 's' : ''}
-                              </span>
-                            </div>
-                          </div>
-
-                          {/* Items Table */}
-                          <div className="overflow-x-auto">
-                            <Table>
-                              <TableHeader>
-                                <TableRow>
-                                  <TableHead className="w-80">Item Details</TableHead>
-                                  {supplierNames.map(supplier => (
-                                    <TableHead key={supplier} className="text-center min-w-64">
-                                      <SupplierTooltip supplierName={supplier}>
-                                        <div className="cursor-help">
-                                          <div className="font-medium">{supplier}</div>
-                                          <div className="text-xs text-gray-500">Base + Freight + VAT = Unit | Total</div>
-                                        </div>
-                                      </SupplierTooltip>
-                                    </TableHead>
-                                  ))}
-                                </TableRow>
-                              </TableHeader>
-                              <TableBody>
-                                {categoryItems.map((item) => {
-                                  const unitStats = calculatePriceStats(item.id, 'unitPrice')
-                                  const totalStats = calculatePriceStats(item.id, 'totalPrice')
-                                  
-                                  return (
-                                    <TableRow key={item.id} className="hover:bg-gray-50">
-                                      <TableCell className="font-medium">
-                                        <ItemTooltip item={item}>
-                                          <div className="cursor-help">
-                                            <div className="font-semibold text-gray-900">{item.name}</div>
-                                            <div className="text-sm text-gray-600">{item.description}</div>
-                                            <div className="text-xs text-gray-500 mt-1">
-                                              Qty: {item.quantity}
+                    <Accordion type="multiple" defaultValue={Object.keys(groupedItems)} className="w-full">
+                      {Object.entries(groupedItems).map(([category, categoryItems]) => {
+                        const categoryTotals = calculateCategoryTotals(categoryItems)
+                        
+                        return (
+                          <AccordionItem key={category} value={category} className="border rounded-lg mb-4">
+                            <AccordionTrigger className="px-6 py-4 hover:no-underline">
+                              <div className="flex items-center justify-between w-full mr-4">
+                                <div className="flex items-center space-x-3">
+                                  <h3 className="text-lg font-semibold text-gray-900">{category}</h3>
+                                  <Badge variant="outline" className="text-xs">
+                                    {categoryItems.length} item{categoryItems.length !== 1 ? 's' : ''}
+                                  </Badge>
+                                </div>
+                                <div className="flex items-center space-x-4 text-sm text-gray-600">
+                                  <span>Subtotal Range: </span>
+                                  <span className="font-medium">
+                                    {formatCurrency(Math.min(...Object.values(categoryTotals).filter(t => t > 0)))} - {formatCurrency(Math.max(...Object.values(categoryTotals)))}
+                                  </span>
+                                </div>
+                              </div>
+                            </AccordionTrigger>
+                            <AccordionContent className="px-6 pb-6">
+                              {/* Items Table */}
+                              <div className="overflow-x-auto">
+                                <Table>
+                                  <TableHeader>
+                                    <TableRow>
+                                      <TableHead className="w-80">Item Details</TableHead>
+                                      {supplierNames.map(supplier => (
+                                        <TableHead key={supplier} className="text-center min-w-64">
+                                          <SupplierTooltip supplierName={supplier}>
+                                            <div className="cursor-help">
+                                              <div className="font-medium">{supplier}</div>
+                                              <div className="text-xs text-gray-500">Base + Freight + VAT = Unit | Total</div>
                                             </div>
-                                          </div>
-                                        </ItemTooltip>
-                                      </TableCell>
-                                      {supplierNames.map(supplier => {
-                                        const supplierData = item.suppliers[supplier]
-                                        const unitPriceClass = getPriceColorClass(supplierData?.unitPrice || 0, unitStats)
-                                        const totalPriceClass = getPriceColorClass(supplierData?.totalPrice || 0, totalStats)
-                                        
-                                        return (
-                                          <TableCell key={supplier} className="text-center">
-                                            {supplierData?.available ? (
-                                              <div className="space-y-3">
-                                                {/* Price Breakdown */}
-                                                <div className="bg-gray-50 p-2 rounded text-xs space-y-1">
-                                                  <div className="flex justify-between">
-                                                    <span className="text-gray-600">Base:</span>
-                                                    <span className="font-medium">{formatCurrency(supplierData.baseUnitPrice)}</span>
-                                                  </div>
-                                                  <div className="flex justify-between">
-                                                    <span className="text-gray-600">Freight:</span>
-                                                    <span className="font-medium">{formatCurrency(supplierData.freightFee)}</span>
-                                                  </div>
-                                                  <div className="flex justify-between">
-                                                    <span className="text-gray-600">VAT:</span>
-                                                    <span className="font-medium">{formatCurrency(supplierData.vat)}</span>
-                                                  </div>
-                                                  <div className="border-t pt-1 flex justify-between font-semibold">
-                                                    <span>Unit Price:</span>
-                                                    <span>{formatCurrency(supplierData.unitPrice)}</span>
-                                                  </div>
-                                                </div>
-                                                
-                                                <PriceTooltip 
-                                                  itemId={item.id} 
-                                                  supplierName={supplier} 
-                                                  priceType="totalPrice" 
-                                                  price={supplierData.totalPrice}
-                                                >
-                                                  <div className={`p-2 rounded cursor-help ${totalPriceClass}`}>
-                                                    <div className="font-bold text-lg">
-                                                      {formatCurrency(supplierData.totalPrice)}
-                                                    </div>
-                                                    <div className="text-xs text-gray-500">total</div>
-                                                  </div>
-                                                </PriceTooltip>
-                                              </div>
-                                            ) : (
-                                              <div className="text-gray-400 text-sm">
-                                                Not Available
-                                              </div>
-                                            )}
-                                          </TableCell>
-                                        )
-                                      })}
+                                          </SupplierTooltip>
+                                        </TableHead>
+                                      ))}
                                     </TableRow>
-                                  )
-                                })}
-                                
-                                {/* Category Totals Row */}
-                                <TableRow className="bg-gray-100 font-semibold">
-                                  <TableCell className="font-bold">
-                                    {category} Subtotal
-                                  </TableCell>
-                                  {supplierNames.map(supplier => (
-                                    <TableCell key={supplier} className="text-center">
-                                      <div className="text-lg font-bold text-primary">
-                                        {formatCurrency(categoryTotals[supplier])}
-                                      </div>
-                                    </TableCell>
-                                  ))}
-                                </TableRow>
-                              </TableBody>
-                            </Table>
-                          </div>
-                        </div>
-                      )
-                    })}
+                                  </TableHeader>
+                                  <TableBody>
+                                    {categoryItems.map((item) => {
+                                      const unitStats = calculatePriceStats(item.id, 'unitPrice')
+                                      const totalStats = calculatePriceStats(item.id, 'totalPrice')
+                                      
+                                      return (
+                                        <TableRow key={item.id} className="hover:bg-gray-50">
+                                          <TableCell className="font-medium">
+                                            <ItemTooltip item={item}>
+                                              <div className="cursor-help">
+                                                <div className="font-semibold text-gray-900">{item.name}</div>
+                                                <div className="text-sm text-gray-600">{item.description}</div>
+                                                <div className="text-xs text-gray-500 mt-1">
+                                                  Qty: {item.quantity}
+                                                </div>
+                                              </div>
+                                            </ItemTooltip>
+                                          </TableCell>
+                                          {supplierNames.map(supplier => {
+                                            const supplierData = item.suppliers[supplier]
+                                            const unitPriceClass = getPriceColorClass(supplierData?.unitPrice || 0, unitStats)
+                                            const totalPriceClass = getPriceColorClass(supplierData?.totalPrice || 0, totalStats)
+                                            
+                                            return (
+                                              <TableCell key={supplier} className="text-center">
+                                                {supplierData?.available ? (
+                                                  <div className="space-y-3">
+                                                    {/* Price Breakdown */}
+                                                    <div className="bg-gray-50 p-2 rounded text-xs space-y-1">
+                                                      <div className="flex justify-between">
+                                                        <span className="text-gray-600">Base:</span>
+                                                        <span className="font-medium">{formatCurrency(supplierData.baseUnitPrice)}</span>
+                                                      </div>
+                                                      <div className="flex justify-between">
+                                                        <span className="text-gray-600">Freight:</span>
+                                                        <span className="font-medium">{formatCurrency(supplierData.freightFee)}</span>
+                                                      </div>
+                                                      <div className="flex justify-between">
+                                                        <span className="text-gray-600">VAT:</span>
+                                                        <span className="font-medium">{formatCurrency(supplierData.vat)}</span>
+                                                      </div>
+                                                      <div className="border-t pt-1 flex justify-between font-semibold">
+                                                        <span>Unit Price:</span>
+                                                        <span>{formatCurrency(supplierData.unitPrice)}</span>
+                                                      </div>
+                                                    </div>
+                                                    
+                                                    <PriceTooltip 
+                                                      itemId={item.id} 
+                                                      supplierName={supplier} 
+                                                      priceType="totalPrice" 
+                                                      price={supplierData.totalPrice}
+                                                    >
+                                                      <div className={`p-2 rounded cursor-help ${totalPriceClass}`}>
+                                                        <div className="font-bold text-lg">
+                                                          {formatCurrency(supplierData.totalPrice)}
+                                                        </div>
+                                                        <div className="text-xs text-gray-500">total</div>
+                                                      </div>
+                                                    </PriceTooltip>
+                                                  </div>
+                                                ) : (
+                                                  <div className="text-gray-400 text-sm">
+                                                    Not Available
+                                                  </div>
+                                                )}
+                                              </TableCell>
+                                            )
+                                          })}
+                                        </TableRow>
+                                      )
+                                    })}
+                                    
+                                    {/* Category Totals Row */}
+                                    <TableRow className="bg-gray-100 font-semibold">
+                                      <TableCell className="font-bold">
+                                        {category} Subtotal
+                                      </TableCell>
+                                      {supplierNames.map(supplier => (
+                                        <TableCell key={supplier} className="text-center">
+                                          <div className="text-lg font-bold text-primary">
+                                            {formatCurrency(categoryTotals[supplier])}
+                                          </div>
+                                        </TableCell>
+                                      ))}
+                                    </TableRow>
+                                  </TableBody>
+                                </Table>
+                              </div>
+                            </AccordionContent>
+                          </AccordionItem>
+                        )
+                      })}
+                    </Accordion>
 
                     {/* Additional Rows */}
                     <div className="space-y-4">
